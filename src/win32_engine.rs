@@ -313,6 +313,14 @@ impl Win32Engine {
     pub fn get_window(&self) -> &HWND {
         &self.hwnd
     }
+
+    pub fn get_width(&self) -> u32 {
+        self.screen_data.width as u32
+    }
+
+    pub fn get_height(&self) -> u32 {
+        self.screen_data.height as u32
+    }
 }
 
 // Win32 Draw functions/methods

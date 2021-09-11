@@ -38,6 +38,20 @@ fn main() {
             player_rect.y += 1;
         }
 
+        // Screen collision
+        if player_rect.x >= win32_engine.get_width() - player_rect.w {
+            player_rect.x = win32_engine.get_width() - player_rect.w - 1;
+        }
+        if player_rect.x <= 0 {
+            player_rect.x = 1;
+        }
+        if player_rect.y >= win32_engine.get_height() - player_rect.h {
+            player_rect.y = win32_engine.get_height() - player_rect.h - 1
+        }
+        if player_rect.y <= 0 {
+            player_rect.y = 1;
+        }
+
         // Update and Draw
         win32_engine.clear_screen(0x2596be, &mut buffer);
 
