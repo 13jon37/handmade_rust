@@ -30,6 +30,7 @@ pub enum WindowMessages {
     WindowClosed,
 }
 
+// Storage for Screen data that excludes the windows bar
 pub struct ClientData {
     width: i32,
     height: i32,

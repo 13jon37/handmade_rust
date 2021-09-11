@@ -25,7 +25,6 @@ fn main() {
         win32_input.get_controller();
 
         // Input
-
         if win32_input.left() {
             player_rect.x -= 1;
         }
