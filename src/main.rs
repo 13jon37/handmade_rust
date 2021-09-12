@@ -57,6 +57,12 @@ fn main() {
 
         win32_engine.draw_rectangle(Color::new(0, 0, 1, 1), &mut player_rect, &mut buffer);
 
+        win32_engine.draw_rectangle(
+            Color::new(1, 0, 1, 1),
+            &mut Rect::new(450, 450, 64, 64),
+            &mut buffer,
+        );
+
         win32_engine.render_buffer_to_screen(&mut buffer);
     }
 }
