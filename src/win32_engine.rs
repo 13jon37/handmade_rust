@@ -1,10 +1,11 @@
+use std::ffi::CString;
 use std::mem;
 use std::process::exit;
 
 use crate::language_layer::{create_wide_char, INVALID_HANDLE_VALUE, OPEN_EXISTING};
 
-use winapi::shared::minwindef::{DWORD, HINSTANCE, LPARAM, LRESULT, UINT, WORD, WPARAM};
-use winapi::shared::ntdef::LPCWSTR;
+use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, UINT, WPARAM};
+use winapi::shared::ntdef::{LPCSTR, LPCWSTR};
 use winapi::shared::windef::{HBRUSH, HDC, HICON, HMENU, HWND, RECT};
 use winapi::shared::winerror::ERROR_SUCCESS;
 use winapi::um::wingdi::{
@@ -23,7 +24,7 @@ use winapi::um::xinput::{
     XINPUT_GAMEPAD_DPAD_RIGHT, XINPUT_GAMEPAD_DPAD_UP, XINPUT_STATE, XUSER_MAX_COUNT,
 };
 
-use crate::math::{Color, Rect};
+use crate::math::{Color, Point, Rect};
 
 //TODO:
 /*
@@ -33,8 +34,6 @@ use crate::math::{Color, Rect};
 */
 
 pub trait Win32Drawable {
-    fn load_bmp(&mut self, file_name: &str) -> Win32GameBitmap;
-    fn draw_bmp(&self, bmp: &mut Win32GameBitmap);
     fn draw_rectangle(&self, color: Color, rect: &mut Rect, buffer: &mut Win32GameBitmap);
 }
 
@@ -73,12 +72,26 @@ pub fn get_client_data(window: &HWND) -> ClientData {
     result
 }
 
+pub struct BitmapHeader {
+    pub file_type: u16,
+    pub file_size: u32,
+    pub reserved_1: u16,
+    pub reserved_2: u16,
+    pub bitmap_offset: u32,
+    pub size: u32,
+    pub width: i32,
+    pub height: i32,
+    pub places: u16,
+    pub bits_per_pixel: u16,
+}
+
 pub struct Win32GameBitmap {
     pub bitmap_info: BITMAPINFO,
     pub memory: *const winapi::ctypes::c_void,
 }
 
 impl Win32GameBitmap {
+    // This creation function is just meant for the background buffer
     pub fn new(window: &HWND) -> Self {
         // Null init
         let colors = [RGBQUAD {
@@ -160,6 +173,55 @@ impl Win32GameBitmap {
             memory: 0 as *mut winapi::ctypes::c_void,
         }
     }
+
+    // These functions and methods are meant for BMP Textures
+    pub fn load_bmp(file_path: &str) -> Win32GameBitmap {
+        let mut result = Win32GameBitmap::empty_bitmap();
+
+        let file = os_read_entire_file(file_path);
+
+        if file.size != 0 {
+            unsafe {
+                result.memory = file.contents;
+                // The byte order is AA BB GG RR in memory, so we're gonna change it
+                // In little endia -> OxRRGGBBAA
+                /*let src_dest = pixels as *mut u32;
+                for _y in 0..(*header).width {
+                    for _x in 0..(*header).height {
+                        *src_dest.add(1) = (*src_dest >> 8) | (*src_dest << 24);
+                    }
+                }
+                pixels = src_dest;*/
+            }
+        }
+
+        result
+    }
+
+    //NOTE: ONLY CALL ON BMP TEXTURES
+    pub fn draw_bmp(&self, pos: Point<u32>, buffer: &mut Win32GameBitmap) {
+        unsafe {
+            let src_pixel = (self.memory as u32
+                + self.bitmap_info.bmiHeader.biWidth as u32
+                    * self.bitmap_info.bmiHeader.biHeight as u32
+                - 1) as *mut u32;
+
+            let dest_pixel = (buffer.memory as u32
+                + pos.y * buffer.bitmap_info.bmiHeader.biWidth as u32
+                + pos.x) as *mut u32;
+
+            for _y in 0..self.bitmap_info.bmiHeader.biHeight {
+                let src = src_pixel;
+                let dest = dest_pixel;
+                for _x in 0..self.bitmap_info.bmiHeader.biWidth {
+                    *dest.add(1) = *src.add(1);
+                }
+                //*dest.add(1) += *pixels;
+                *dest_pixel.add(1) = buffer.bitmap_info.bmiHeader.biWidth as u32;
+                *src_pixel.sub(1) = self.bitmap_info.bmiHeader.biWidth as u32;
+            }
+        }
+    }
 }
 
 unsafe extern "system" fn window_proc(
@@ -174,6 +236,72 @@ unsafe extern "system" fn window_proc(
     }
 
     DefWindowProcW(h_wnd, msg, w_param, l_param)
+}
+
+pub struct ReadResult {
+    contents: *mut winapi::ctypes::c_void,
+    pub size: u64,
+}
+
+pub fn os_read_entire_file(file_path: &str) -> ReadResult {
+    let mut result = ReadResult {
+        contents: 0 as *mut winapi::ctypes::c_void,
+        size: 0,
+    };
+
+    unsafe {
+        let file_path_converted = CString::new(file_path).unwrap();
+
+        // Get file
+        let file_handle = CreateFileA(
+            file_path_converted.as_ptr() as LPCSTR,
+            GENERIC_READ,
+            FILE_SHARE_READ,
+            std::ptr::null_mut(),
+            OPEN_EXISTING,
+            FILE_ATTRIBUTE_NORMAL,
+            std::ptr::null_mut(),
+        );
+
+        // If the file handle is -1 there's a problem
+        if file_handle == INVALID_HANDLE_VALUE as *mut std::ffi::c_void {
+            println!("File handle wrong. Function: os_read_entire_file()");
+            exit(1);
+        }
+
+        // Read file size
+        let file_size = GetFileSize(file_handle as *mut std::ffi::c_void, std::ptr::null_mut());
+
+        result.size = file_size as u64;
+        result.contents = VirtualAlloc(
+            file_handle as *mut std::ffi::c_void,
+            result.size,
+            MEM_COMMIT | MEM_RESERVE,
+            PAGE_READWRITE,
+        ) as *mut winapi::ctypes::c_void;
+
+        let bytes_read: *mut u32 = 0 as *mut u32;
+
+        let read = ReadFile(
+            file_handle as *mut std::ffi::c_void,
+            result.contents as *mut std::ffi::c_void,
+            file_size,
+            bytes_read,
+            std::ptr::null_mut(),
+        );
+
+        if read == 0 {
+            // Success
+            println!("Reading file was a success!");
+        } else {
+            println!("Failed to read file. Function: os_read_entire_file()");
+            exit(1);
+        }
+
+        CloseHandle(file_handle);
+    }
+
+    result
 }
 
 pub struct Win32Engine {
@@ -367,59 +495,16 @@ impl Win32Engine {
     pub fn get_height(&self) -> u32 {
         self.screen_data.height as u32
     }
+
+    pub fn release(&self) {
+        unsafe {
+            ReleaseDC(self.hwnd, self.device_context);
+        }
+    }
 }
 
 // Win32 Draw functions/methods
 impl Win32Drawable for Win32Engine {
-    // Reminder: actually handly alpha this time
-    fn load_bmp(&mut self, file_name: &str) -> Win32GameBitmap {
-        let bmp_texture = Win32GameBitmap::empty_bitmap();
-
-        let mut _bitmap_header: WORD = 0;
-        let mut _pixel_data_offset = 0;
-        let mut _bytes_read: DWORD = 2;
-
-        let bm: WORD = 19778;
-
-        let file = create_wide_char(file_name).as_ptr();
-
-        unsafe {
-            let file_handle = CreateFileA(
-                file as *const i8,
-                GENERIC_READ,
-                FILE_SHARE_READ,
-                std::ptr::null_mut(),
-                OPEN_EXISTING,
-                FILE_ATTRIBUTE_NORMAL,
-                0 as *mut std::ffi::c_void,
-            );
-
-            // INVALID_HANDLE_VALUE used in C = -1;
-            if file_handle == INVALID_HANDLE_VALUE as *mut std::ffi::c_void {
-                exit(1);
-            }
-
-            if ReadFile(
-                file_handle,
-                _bitmap_header as *mut std::ffi::c_void,
-                2,
-                _bytes_read as *mut u32,
-                std::ptr::null_mut(),
-            ) == 0
-            {
-                exit(1);
-            }
-
-            if _bitmap_header != bm {
-                exit(1);
-            }
-        }
-
-        bmp_texture
-    }
-
-    fn draw_bmp(&self, bmp: &mut Win32GameBitmap) {}
-
     // Thank you Ryan Fleury, I was too stupid to figure this out so I just
     // translated your C code to rust. :) :dumb:
     fn draw_rectangle(&self, color: Color, rect: &mut Rect, buffer: &mut Win32GameBitmap) {

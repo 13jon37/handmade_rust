@@ -3,8 +3,8 @@ pub fn _as_fractional_secs(dur: &std::time::Duration) -> f32 {
 }
 
 pub struct Point<T> {
-    x: T,
-    y: T,
+    pub x: T,
+    pub y: T,
 }
 
 impl<T> Point<T> {

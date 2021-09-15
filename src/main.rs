@@ -2,7 +2,7 @@ mod language_layer;
 mod math;
 mod win32_engine;
 
-use math::{Color, Rect};
+use math::{Color, Point, Rect};
 use win32_engine::{Win32Drawable, Win32Engine, Win32GameBitmap, Win32Input};
 
 fn main() {
@@ -15,7 +15,9 @@ fn main() {
     // The window buffer
     let mut buffer = Win32GameBitmap::new(win32_engine.get_window());
 
-    let mut player_rect = Rect::new(250, 250, 23, 23);
+    let mut player_rect = Rect::new(250, 250, 64, 64);
+
+    let mut test_read = Win32GameBitmap::load_bmp("Assets/test_file.bmpx");
 
     while win32_engine.is_running() {
         // Events and input
@@ -53,9 +55,7 @@ fn main() {
         }
 
         // Update and Draw
-        win32_engine.clear_screen(0x2596be, &mut buffer);
-
-        win32_engine.draw_rectangle(Color::new(0, 0, 1, 1), &mut player_rect, &mut buffer);
+        win32_engine.clear_screen(0x2596beff, &mut buffer);
 
         win32_engine.draw_rectangle(
             Color::new(1, 0, 1, 1),
@@ -63,6 +63,12 @@ fn main() {
             &mut buffer,
         );
 
+        win32_engine.draw_rectangle(Color::new(0, 0, 1, 1), &mut player_rect, &mut buffer);
+
+        //test_read.draw_bmp(Point::new(25, 25), &mut buffer);
+
         win32_engine.render_buffer_to_screen(&mut buffer);
     }
+
+    win32_engine.release(); // Release DC
 }
