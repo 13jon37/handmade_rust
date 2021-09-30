@@ -1,10 +1,11 @@
 use std::ffi::CString;
+use std::io::Read;
 use std::mem;
 use std::process::exit;
 
 use crate::language_layer::{create_wide_char, INVALID_HANDLE_VALUE, OPEN_EXISTING};
 
-use winapi::shared::minwindef::{HINSTANCE, LPARAM, LRESULT, UINT, WPARAM};
+use winapi::shared::minwindef::{HINSTANCE, LPARAM, LPDWORD, LPVOID, LRESULT, UINT, WORD, WPARAM};
 use winapi::shared::ntdef::{LPCSTR, LPCWSTR};
 use winapi::shared::windef::{HBRUSH, HDC, HICON, HMENU, HWND, RECT};
 use winapi::shared::winerror::ERROR_SUCCESS;
@@ -13,8 +14,8 @@ use winapi::um::wingdi::{
 };
 
 use winapi::um::winnt::{
-    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE,
-    PAGE_READWRITE,
+    FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, GENERIC_READ, HANDLE, HEAP_ZERO_MEMORY, MEM_COMMIT,
+    MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
 };
 use winapi::um::winuser::*;
 
@@ -153,12 +154,12 @@ impl Win32GameBitmap {
 
         let bitmap: BITMAPINFO = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
-                biSize: mem::size_of::<BITMAPINFOHEADER>() as u32,
+                biSize: 0,
                 biWidth: 0,
                 biHeight: 0,
-                biPlanes: 1,
-                biBitCount: 32,
-                biCompression: BI_RGB,
+                biPlanes: 0,
+                biBitCount: 0,
+                biCompression: 0,
                 biSizeImage: 0,
                 biXPelsPerMeter: 0,
                 biYPelsPerMeter: 0,
@@ -178,21 +179,39 @@ impl Win32GameBitmap {
     pub fn load_bmp(file_path: &str) -> Win32GameBitmap {
         let mut result = Win32GameBitmap::empty_bitmap();
 
-        let file = os_read_entire_file(file_path);
+        let mut fhandle = std::fs::File::open(file_path).expect("Failed to open file.");
+        let metadata = std::fs::metadata(&file_path).expect("Unable to read metadata.");
 
-        if file.size != 0 {
-            unsafe {
-                result.memory = file.contents;
-                // The byte order is AA BB GG RR in memory, so we're gonna change it
-                // In little endia -> OxRRGGBBAA
-                /*let src_dest = pixels as *mut u32;
-                for _y in 0..(*header).width {
-                    for _x in 0..(*header).height {
-                        *src_dest.add(1) = (*src_dest >> 8) | (*src_dest << 24);
-                    }
-                }
-                pixels = src_dest;*/
-            }
+        let mut bm_read = vec![0; metadata.len() as usize];
+
+        fhandle
+            .read_exact(&mut bm_read)
+            .expect("Failed to read file.");
+
+        println!("{:?}", String::from_utf8(bm_read.clone()));
+
+        //NOTE:Literally just setting everything from the index of the vector
+        // Maybe make this less manual and sorta dumb?? idk shouldn't create
+        // problems as all bmp files i'm loading are the same :shrug:
+        result.bitmap_info.bmiHeader.biSize = bm_read[14] as u32;
+        result.bitmap_info.bmiHeader.biWidth = bm_read[18] as i32;
+        result.bitmap_info.bmiHeader.biHeight = bm_read[22] as i32;
+        result.bitmap_info.bmiHeader.biPlanes = bm_read[24] as u16;
+        result.bitmap_info.bmiHeader.biPlanes = bm_read[26] as u16;
+        result.bitmap_info.bmiHeader.biBitCount = bm_read[28] as u16;
+        result.bitmap_info.bmiHeader.biCompression = bm_read[30] as u32;
+
+        // Subract 122 bytes from length to get the right size
+        // the 122 comes from biSize (108) + 14 (cuz it's 14 bytes in the array)
+        result.bitmap_info.bmiHeader.biSizeImage =
+            metadata.len() as u32 - (result.bitmap_info.bmiHeader.biSize + 14);
+
+        unsafe {
+            result.memory = HeapAlloc(
+                GetProcessHeap(),
+                HEAP_ZERO_MEMORY,
+                result.bitmap_info.bmiHeader.biSizeImage as u64,
+            ) as *const winapi::ctypes::c_void;
         }
 
         result
@@ -201,24 +220,23 @@ impl Win32GameBitmap {
     //NOTE: ONLY CALL ON BMP TEXTURES
     pub fn draw_bmp(&self, pos: Point<u32>, buffer: &mut Win32GameBitmap) {
         unsafe {
-            let src_pixel = (self.memory as u32
-                + self.bitmap_info.bmiHeader.biWidth as u32
-                    * self.bitmap_info.bmiHeader.biHeight as u32
-                - 1) as *mut u32;
+            let pixel = self.memory as *mut u8; // Starting pixel
+            let buff = buffer.memory as *mut u8;
 
-            let dest_pixel = (buffer.memory as u32
-                + pos.y * buffer.bitmap_info.bmiHeader.biWidth as u32
-                + pos.x) as *mut u32;
+            let lower_y = pos.y;
+            let lower_x = pos.x;
+            let upper_y = lower_y + self.bitmap_info.bmiHeader.biHeight as u32;
+            let upper_x = lower_x + self.bitmap_info.bmiHeader.biWidth as u32;
 
-            for _y in 0..self.bitmap_info.bmiHeader.biHeight {
-                let src = src_pixel;
-                let dest = dest_pixel;
-                for _x in 0..self.bitmap_info.bmiHeader.biWidth {
-                    *dest.add(1) = *src.add(1);
+            let mut counter = 0;
+            for y in lower_y..upper_y as u32 {
+                for x in lower_x..upper_x as u32 {
+                    counter = y * buffer.bitmap_info.bmiHeader.biWidth as u32 + x;
+
+                    *buff.add((counter * 4 + 0) as usize) = *pixel.add(1);
+                    *buff.add((counter * 4 + 1) as usize) = *pixel.add(1);
+                    *buff.add((counter * 4 + 2) as usize) = *pixel.add(1);
                 }
-                //*dest.add(1) += *pixels;
-                *dest_pixel.add(1) = buffer.bitmap_info.bmiHeader.biWidth as u32;
-                *src_pixel.sub(1) = self.bitmap_info.bmiHeader.biWidth as u32;
             }
         }
     }
@@ -364,7 +382,7 @@ impl Win32Engine {
         unsafe {
             let mut msg: MSG = std::mem::zeroed();
 
-            // process messages
+            // Process messages
             while PeekMessageA(&mut msg, self.hwnd, 0, 0, PM_REMOVE) > 0 {
                 TranslateMessage(&msg);
                 DispatchMessageA(&msg);
@@ -422,18 +440,22 @@ impl Win32Engine {
 
     pub fn clear_screen(&self, color: u32, buffer: &mut Win32GameBitmap) {
         unsafe {
-            let pixel = buffer.memory as *mut u32;
+            /*  let pixel = buffer.memory as *mut u32;
 
             let mut counter = 0;
             for _y in 0..self.screen_data.height {
                 for _x in 0..self.screen_data.width {
-                    counter += 1;
                     *pixel.add(counter) = color;
-
+                    counter += 1;
                     // Confused me because in C
                     // it's *pixel++ = color;
                 }
-            }
+            }*/
+            libc::memset(
+                buffer.memory as *mut libc::c_void,
+                color as i32,
+                (self.screen_data.width * self.screen_data.height * 4) as usize,
+            );
         }
     }
 
@@ -496,6 +518,18 @@ impl Win32Engine {
         self.screen_data.height as u32
     }
 
+    // check window focus
+    pub fn check_focus(&self) -> bool {
+        unsafe {
+            let wind = GetFocus();
+            if wind == self.hwnd {
+                return true;
+            }
+        }
+
+        false
+    }
+
     pub fn release(&self) {
         unsafe {
             ReleaseDC(self.hwnd, self.device_context);
@@ -521,12 +555,13 @@ impl Win32Drawable for Win32Engine {
                 for x in lower_bound_x..upper_bound_x {
                     _pixel_index = y * self.screen_data.width as u32 + x;
                     // Pixel index is the pixel coord we wanna change the color of
-                    *pixel.add((_pixel_index * 4 + 0) as usize) = color.r * 255;
+                    *pixel.add((_pixel_index * 4 + 2) as usize) = color.r * 255;
                     *pixel.add((_pixel_index * 4 + 1) as usize) = color.g * 255;
-                    *pixel.add((_pixel_index * 4 + 2) as usize) = color.b * 255;
+                    *pixel.add((_pixel_index * 4 + 0) as usize) = color.b * 255;
                 }
             }
         }
+        println!("{}", rect.x);
     }
 }
 
