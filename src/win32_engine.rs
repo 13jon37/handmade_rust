@@ -35,7 +35,7 @@ use crate::math::{Color, Point, Rect};
 */
 
 pub trait Win32Drawable {
-    fn draw_rectangle(&self, color: Color, rect: &mut Rect, buffer: &mut Win32GameBitmap);
+    fn draw_rectangle(&self, color: &Color, rect: &Rect, buffer: &mut Win32GameBitmap);
 }
 
 static mut IS_WINDOW_CLOSED: bool = false;
@@ -541,7 +541,7 @@ impl Win32Engine {
 impl Win32Drawable for Win32Engine {
     // Thank you Ryan Fleury, I was too stupid to figure this out so I just
     // translated your C code to rust. :) :dumb:
-    fn draw_rectangle(&self, color: Color, rect: &mut Rect, buffer: &mut Win32GameBitmap) {
+    fn draw_rectangle(&self, color: &Color, rect: &Rect, buffer: &mut Win32GameBitmap) {
         unsafe {
             let pixel = buffer.memory as *mut u8; // Starting pixel
 
@@ -561,7 +561,7 @@ impl Win32Drawable for Win32Engine {
                 }
             }
         }
-        println!("{}", rect.x);
+        //println!("{}", rect.x);
     }
 }
 
